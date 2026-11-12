@@ -204,7 +204,7 @@
 <div id="tc"><!-- スマホ操作 -->
   <div class="zone" id="zoneL"></div>
   <div class="pad" id="padL"><div class="knob"></div><div class="lb">移動</div></div>
-  <div class="pad" id="padR"><div class="knob"></div><div class="lb">狙う</div></div>
+  <div class="pad" id="padR"><div class="knob"></div><div class="lb">別の向きを狙う</div></div>
   <button class="tbtn big" id="tb1"><span class="cdr"></span>魔法1</button>
   <button class="tbtn big" id="tb2"><span class="cdr"></span>魔法2</button>
   <button class="tbtn sm" id="tbEd">組む</button>
@@ -4926,8 +4926,9 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // ---------------- スマホ操作（UC依頼 2026-11-13） ----------------
-// 左半分=移動パッド（触った所に出る） / 右下=狙うパッド（倒した向きを狙う。離しても最後の向きのまま） / 魔法1・魔法2ボタン（押している間は撃てるたびに撃つ）
-// 狙い方は dailies で A（ツインスティック）を UC が選択
+// 左半分=移動パッド（触った所に出る） / 右下=狙うパッド / 魔法1・魔法2ボタン（押している間は撃てるたびに撃つ）
+// 狙う向き（UC指示 2026-11-13「デュアルは超やりづらい」）: ふだんは歩いている向きが正面。右下のパッドを触っている間だけ、その向きを狙う（進む向きと違う方へ撃ちたいとき用）。
+// 離すと歩く向きに戻る。止まっているときは最後の向きのまま
 var edScale = 1;
 function fitEditor() { // 編集画面が画面に入りきらないときは縮める
   const w = document.getElementById('edwrap');
@@ -5020,6 +5021,7 @@ const TC = (() => {
   }
   function tick() {
     if (isTouch()) {
+      if (rId === null && touchMv.on) aimA = Math.atan2(touchMv.y, touchMv.x); // 右のパッドを触っていなければ歩く向きを狙う
       setAim();
       const r = Math.min(110, Math.min(W, H) * 0.3);
       aimDot.style.left = (W / 2 + Math.cos(aimA) * r) + 'px'; aimDot.style.top = (H / 2 + Math.sin(aimA) * r) + 'px';
