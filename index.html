@@ -6,6 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <title>魔法プログラムRPG プロトタイプ</title>
+<meta name="description" content="ブロックを線でつないで魔法を自作する2Dアクションローグライク（試作版）。PC・スマホ対応。">
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0d0f16; color: #e6e8f0;
@@ -1216,6 +1217,7 @@ function startMode(m) {
 // モードを選んだら、主人公を選ぶ画面へ
 let pendingMode = null;
 function chooseMode(m) {
+  if (m === 'debug' && !SHOW_DEBUG) return;
   pendingMode = m;
   document.getElementById('title').classList.remove('open');
   document.getElementById('heroSel').classList.add('open');
@@ -1316,6 +1318,9 @@ function choosePickup(i) {
   if (pickBonus || !(mode === 'normal' && openPickup(true))) beginBreak(); // 階クリア: レベルアップの後に階クリアの3択
 }
 
+// 一般公開版ではデバッグモードを隠す。URL の末尾に ?debug を付けると出る（2026-11-13 一般公開にあたって）
+const SHOW_DEBUG = /[?&]debug(=|&|$)/.test(location.search);
+if (!SHOW_DEBUG) document.querySelector('#title .card[data-mode="debug"]').style.display = 'none';
 const keys = {}, mouse = { x: 0, y: 0 }, touchMv = { on: false, x: 0, y: 0 };
 let editorOpen = false;
 
@@ -4347,7 +4352,7 @@ addEventListener('keydown', e => {
       return;
     }
     if (num === 0) chooseMode('normal'); // モード選択画面
-    if (num === 1) chooseMode('debug');
+    if (num === 1 && SHOW_DEBUG) chooseMode('debug');
     return;
   }
   if (S.choosing) { if (num != null) choosePickup(num); e.preventDefault(); return; }
