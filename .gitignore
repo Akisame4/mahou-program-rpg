@@ -1,0 +1,15 @@
+# 公開するのはゲーム本体と使っている画像だけ（設計書・指示書・見本などは載せない）
+/*
+!/index.html
+!/.gitignore
+!/Char/
+/Char/*
+!/Char/player/
+!/Char/boss_graysia/
+!/Char/boss_holo/
+!/Char/boss_orbita/
+!/Char/boss_spire/
+!/Char/菌糸/
+*.zip
+*.md
+*.txt
