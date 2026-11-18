@@ -404,6 +404,8 @@ const CONFIG = {
   mapW: 4000, mapH: 4000, pillarCount: 28, pillarR: [28, 75], pillarClear: 260,
   // 床（国ごとのドット絵のタイル）[仮] px = 1ドットの大きさ / k = 模様の濃さ（0 で無地、1 でしっかり）
   floor: { px: 2, k: 1 },
+  // 障害物の絵 [仮] dot = 1ドットの大きさ / elev = 上の面をどれだけ上に描くか（高さの見え方）
+  obstacle: { dot: 2, elev: 12 },
   // 3つ目の魔法枠（UC決定 2026-10-26: 階をクリアすると解放）[仮] 何階のクリアで解放するか
   slot3Stage: 1,
   // 3か国を巡る（UC決定 2026-11-04）: 1周で巡る国の数 / 1か国の階の数（2階＋ラスボス）
@@ -2036,16 +2038,183 @@ function addEnemy(type, x, y, extra) {
   S.enemies.push(e);
   return e;
 }
+// ---------------- 障害物（国ごとの形と絵。2026-11-19 UC依頼「国ごとのデザインに、丸だけじゃなくいろんな形に」）----------------
+// 形は国ごとの種類から選び、向きもばらばら。絵はその場でドット絵にする（CONFIG.obstacle.dot 倍）。
+// 当たり判定は形の中を丸で埋めたもの。その丸を S.pillars に入れるので、弾・移動・跳ね返りなどの処理は丸のときのまま。
+// 高さ: 上の面を CONFIG.obstacle.elev だけ上にずらして描き、その下に側面を描く（当たり判定は足元の形）
+const obHash = (x, y) => { const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453; return s - Math.floor(s); };
+const obRect = (x, y, hw, hh) => Math.abs(x) <= hw && Math.abs(y) <= hh;
+// 形: s = 0〜1 の大きさ、rnd = 乱数。inside(x, y) と、絵で使う寸法を返す
+const OB_SHAPES = {
+  round:  (s) => { const r = 30 + 45 * s; return { r, inside: (x, y) => x * x + y * y <= r * r }; },
+  square: (s) => { const h = 28 + 30 * s; return { hw: h, hh: h, inside: (x, y) => obRect(x, y, h, h) && Math.abs(x) + Math.abs(y) <= h * 1.75 }; },
+  bar:    (s) => { const hw = 75 + 55 * s, hh = 17 + 7 * s; return { hw, hh, inside: (x, y) => obRect(x, y, hw, hh) }; },
+  L:      (s) => { const a = 55 + 30 * s, t = 20; return { a, t, inside: (x, y) => obRect(x + a / 2 - t, y, a / 2 + t, t) && x <= t || obRect(x, y + a / 2 - t, t, a / 2 + t) && y <= t }; },
+  cross:  (s) => { const a = 48 + 22 * s, t = 18; return { a, t, inside: (x, y) => obRect(x, y, a, t) || obRect(x, y, t, a) }; },
+  tri:    (s) => { const r = 45 + 35 * s; return { r, inside: (x, y) => { for (let i = 0; i < 3; i++) { const a = -Math.PI / 2 + i * 2.094 + 1.047; if (x * Math.cos(a) + y * Math.sin(a) > r * 0.5) return false; } return true; } }; },
+  hex:    (s) => { const r = 36 + 34 * s; return { r, inside: (x, y) => { for (let i = 0; i < 6; i++) { const a = i * 1.047; if (x * Math.cos(a) + y * Math.sin(a) > r * 0.866) return false; } return true; } }; },
+  gear:   (s) => { const r = 40 + 30 * s; return { r, inside: (x, y) => { const d = Math.hypot(x, y), a = Math.atan2(y, x); return d <= r - 9 || (d <= r && Math.cos(a * 8) > 0.2); } }; },
+  shard:  (s, rnd) => { const n = 5 + Math.floor(rnd() * 3), R0 = 38 + 34 * s, v = []; for (let i = 0; i < n; i++) { const a = (i + (rnd() - .5) * 0.6) / n * 6.283; v.push([Math.cos(a) * R0 * (0.6 + rnd() * 0.4), Math.sin(a) * R0 * (0.6 + rnd() * 0.4) * (0.65 + s * 0.2)]); }
+            return { r: R0, inside: (x, y) => { let c = false; for (let i = 0, j = n - 1; i < n; j = i++) { const [xi, yi] = v[i], [xj, yj] = v[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; } }; },
+  blob:   (s, rnd) => { const cs = []; for (let i = 0; i < 3 + Math.floor(rnd() * 2); i++) { const a = rnd() * 6.28, d = i ? 18 + rnd() * 26 : 0; cs.push([Math.cos(a) * d, Math.sin(a) * d, 22 + rnd() * 16 + s * 12]); }
+            return { cs, inside: (x, y) => cs.some(([cx, cy, r]) => (x - cx) ** 2 + (y - cy) ** 2 <= r * r) }; },
+};
+// 国ごとの障害物: kinds = 出る形（重み）、rot = 向き（'right' は 45°刻み、'free' は自由）、色と模様
+const OB_STYLES = {
+  // 浮遊演算塔の国: 演算機の箱・サーバーの列・配管の壁・六角の塔の土台。継ぎ目と光る核
+  calc: { kinds: { square: 3, bar: 3, L: 2, shard: 3 }, rot: 'free', rough: 3, chips: 3,
+    col: { top: '#283041', hi: '#46506a', lo: '#161b26', side: '#151923', sideLo: '#0c0f16', shadow: 'rgba(0,0,0,.35)' },
+    top(x, y, k, P, C) {
+      if (k === 'bar') {
+        if (Math.abs(y) < 2 && Math.abs(x) < P.hw - 6 && ((x + 300) % 12 + 12) % 12 < 3) return obHash(Math.floor(x / 12), 1) < 0.6 ? '#66d9e8' : '#2b5c68'; // ランプの列
+        if (Math.abs(Math.abs(y) - P.hh * 0.55) < 1) return '#1c2230';
+        return null;
+      }
+      const d = Math.hypot(x, y);
+      if (d < 6) return '#99e9f2'; if (d < 9) return '#3b8d99'; if (d < 12) return '#1c2230';
+      if ((Math.abs(x) % 20 < 1.5 || Math.abs(y) % 20 < 1.5) && d > 14) return '#202737'; // 継ぎ目
+      if (k === 'L' || k === 'cross') { if ((Math.abs(x) < 2 || Math.abs(y) < 2) && d > 12) return '#2b5c68'; } // 配管の中の光
+      return null;
+    } },
+  // 光路の都市: ネオンの看板・ガラスの箱・光る柱・三角のプリズム。ふちがネオンで光る
+  lumen: { kinds: { bar: 3, square: 2, round: 2, shard: 3 }, rot: 'free', neon: true, rough: 2, chips: 2,
+    col: { top: '#121829', hi: '#3bc9db', lo: '#1d6f7d', side: '#0b0f1c', sideLo: '#070a12', shadow: 'rgba(0,0,0,.35)' },
+    top(x, y, k, P) {
+      if (k === 'bar' && Math.abs(y) < P.hh * 0.45 && Math.abs(x) < P.hw - 10) { const c = Math.floor((x + 300) / 6); return obHash(c, Math.floor((y + 50) / 6)) < 0.45 ? '#2c6f86' : '#16203a'; } // 看板の文字
+      if (k === 'round' && Math.abs(Math.hypot(x, y) - P.r * 0.55) < 1.5) return '#66d9e8';
+      if (((x + y) % 28 + 28) % 28 < 3) return '#1b2440'; // 映り込み
+      return null;
+    } },
+  // 菌糸の森: 大きなきのこ・苔むした岩（光の線）・倒れた木・苔むした石柱
+  fungus: { kinds: { round: 3, blob: 3, bar: 2 }, rot: 'free', rough: 5, chips: 1,
+    col: { top: '#26352b', hi: '#3c5544', lo: '#141d17', side: '#18201a', sideLo: '#0d120f', shadow: 'rgba(0,0,0,.35)' },
+    top(x, y, k, P) {
+      if (k === 'round') { // きのこの傘: 中ほど明るく、光る斑点
+        const d = Math.hypot(x, y) / P.r, cx = Math.floor((x + 300) / 10), cy = Math.floor((y + 300) / 10);
+        if (obHash(cx, cy) < 0.18 && Math.hypot(((x + 300) % 10) - 5, ((y + 300) % 10) - 5) < 2.5 && d < 0.85) return '#63e6be';
+        if (d < 0.35) return '#33493a'; if (d > 0.88) return '#1c2820'; return null;
+      }
+      if (k === 'bar') { // 倒れた木: 皮の筋と苔
+        if (Math.abs(x) > P.hw - 6) return Math.abs(y) % 6 < 2 ? '#3a3122' : '#2c2519';
+        if (obHash(Math.floor(x / 8), Math.floor(y / 8)) < 0.3) return '#2f4a33';
+        return Math.abs(y) % 7 < 1.5 ? '#2a241a' : '#352c1f';
+      }
+      // 岩: 苔のむらと青白い光の線
+      if (Math.abs(y - Math.sin(x / 9) * 5) < 1.2 && Math.abs(x) < 26) return '#99e9f2';
+      if (obHash(Math.floor(x / 7), Math.floor(y / 7)) < 0.35) return '#2f4a33';
+      return '#2a312c';
+    } },
+  // 凍った時間の街: 時計台の土台・氷の結晶・倒れた円柱・凍った歯車・崩れた壁
+  chrono: { kinds: { square: 2, shard: 3, bar: 2, gear: 2, L: 1 }, rot: 'free', rough: 4, chips: 3,
+    col: { top: '#2a3342', hi: '#56677e', lo: '#151b25', side: '#161c27', sideLo: '#0d1118', shadow: 'rgba(0,0,0,.35)' },
+    top(x, y, k, P) {
+      if (k === 'shard') { // 氷の結晶: 面ごとに明るさを変える
+        const a = Math.atan2(y, x), f = Math.floor(((a + Math.PI) / 2.094)) % 3;
+        if (Math.abs(Math.sin(a * 1.5)) < 0.06) return '#c5f6fa';
+        return ['#46647f', '#5b7d9c', '#38506a'][f];
+      }
+      if (k === 'square') { // 時計の文字盤
+        const d = Math.hypot(x, y), R = P.hw * 0.7, a = Math.atan2(y, x);
+        if (Math.abs(d - R) < 1.5) return '#74c0fc';
+        if (d < R && d > R - 6 && Math.abs(Math.sin(a * 6)) < 0.12) return '#4dabf7';
+        if ((Math.abs(y) < 1.3 && x > 0 && x < R * 0.55) || (Math.abs(x) < 1.3 && y < 0 && -y < R * 0.8)) return '#a5d8ff';
+        if (d < R) return '#1d2533';
+      }
+      if (k === 'gear') { const d = Math.hypot(x, y); if (d < 8) return '#151b25'; if (d < 12) return '#74c0fc'; if (Math.abs(d - P.r * 0.6) < 1) return '#3a4558'; }
+      if (k === 'bar') { if (((y + 100) % 8 + 8) % 8 < 2) return '#1f2734'; } // 円柱の溝
+      if (k === 'L') { const r = Math.floor((y + 300) / 10); if (((y + 300) % 10) < 1.5 || (((x + 300 + (r % 2) * 10) % 20) < 1.5)) return '#1a212d'; } // れんが
+      const f = obHash(Math.floor(x / 6), Math.floor(y / 6)); if (f < 0.12) return '#46566c'; // 霜
+      return null;
+    } },
+  // 衛星の遊牧民: 太陽電池の板・アンテナの皿・岩のかたまり・積み荷の箱
+  sat: { kinds: { bar: 3, round: 2, blob: 3, shard: 2, hex: 1 }, rot: 'free', rough: 4, chips: 2,
+    col: { top: '#363940', hi: '#5a5f6a', lo: '#1c1e23', side: '#1d1b19', sideLo: '#100f0e', shadow: 'rgba(0,0,0,.35)' },
+    top(x, y, k, P) {
+      if (k === 'bar') { // 太陽電池: 枠の中にマス目
+        if (Math.abs(x) > P.hw - 4 || Math.abs(y) > P.hh - 4) return null;
+        if (((x + 300) % 14) < 1.5 || ((y + 300) % 14) < 1.5) return '#2b5c68';
+        return obHash(Math.floor((x + 300) / 14), Math.floor((y + 300) / 14)) < 0.15 ? '#24304a' : '#18233a';
+      }
+      if (k === 'round') { const d = Math.hypot(x, y); if (d < 5) return '#99e9f2'; if (Math.abs(d % 12 - 6) < 1) return '#4a4f5a'; return d < P.r * 0.9 ? '#2c3038' : null; } // アンテナの皿
+      if (k === 'hex') { if (Math.abs(y) % 12 < 1.5) return '#2a2620'; return '#3d362b'; } // 木の箱
+      // 岩: 茶色のざらざら
+      const h = obHash(Math.floor(x / 3), Math.floor(y / 3)); return h < 0.2 ? '#463e33' : h < 0.4 ? '#2d2822' : '#3a332a';
+    } },
+};
+// 1つの障害物を作る（形・絵・当たり判定の丸）
+function makeObstacle(land, x, y) {
+  const st = OB_STYLES[land] || OB_STYLES.calc, rnd = Math.random;
+  const ks = Object.entries(st.kinds); let w = rnd() * ks.reduce((a, [, v]) => a + v, 0), kind = ks[0][0];
+  for (const [k, v] of ks) { if ((w -= v) < 0) { kind = k; break; } }
+  const P0 = OB_SHAPES[kind](rnd(), rnd), P = Object.assign({}, P0);
+  { // 幾何学的になりすぎないように崩す（UC 2026-11-19「あんまり幾何学的じゃない方がいい」）: ふちをゆらがせ、ふちを何か所か欠けさせる
+    const ro = st.rough || 0, ph = [rnd() * 9, rnd() * 9, rnd() * 9, rnd() * 9], chips = [];
+    const wob = (x, y) => [x + ro * (Math.sin(y * 0.11 + ph[0]) + 0.6 * Math.sin(y * 0.29 + x * 0.07 + ph[1])), y + ro * (Math.sin(x * 0.1 + ph[2]) + 0.6 * Math.sin(x * 0.31 - y * 0.05 + ph[3]))];
+    for (let n = 0, tries = 0; n < (st.chips || 0) && tries < 60; tries++) { // 欠け: ふちの近くに丸い穴をあける
+      const a = rnd() * 6.283; let d = 150; while (d > 0 && !P0.inside(Math.cos(a) * d, Math.sin(a) * d)) d -= 2;
+      if (d < 20) continue; chips.push([Math.cos(a) * d, Math.sin(a) * d, 6 + rnd() * 9]); n++;
+    }
+    P.inside = (x, y) => { const [wx, wy] = wob(x, y); return P0.inside(wx, wy) && !chips.some(([cx, cy, r]) => (x - cx) ** 2 + (y - cy) ** 2 < r * r); };
+  }
+  const ang = st.rot === 'right' ? Math.floor(rnd() * 8) * Math.PI / 4 : rnd() * Math.PI * 2;
+  const ca = Math.cos(ang), sa = Math.sin(ang), D = CONFIG.obstacle.dot, E = Math.round(CONFIG.obstacle.elev / D);
+  const loc = (wx, wy) => [wx * ca + wy * sa, -wx * sa + wy * ca]; // 画面の向き → 形の向き
+  let R = 0; // 形の外側までの距離
+  for (let a = 0; a < 6.28; a += 0.05) for (let d = 160; d > 0; d -= 2) { const [lx, ly] = loc(Math.cos(a) * d, Math.sin(a) * d); if (P.inside(lx, ly)) { R = Math.max(R, d); break; } }
+  const c = Math.ceil(R / D) + E + 4, N = c * 2 + 1;
+  const B = new Uint8Array(N * N); // 足元の形
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const [lx, ly] = loc((i - c) * D, (j - c) * D); B[j * N + i] = P.inside(lx, ly) ? 1 : 0; }
+  const b = (i, j) => i >= 0 && j >= 0 && i < N && j < N && B[j * N + i] === 1;
+  const top = (i, j) => b(i, j + E);
+  const cv = document.createElement('canvas'); cv.width = cv.height = N;
+  const g = cv.getContext('2d'), C = st.col;
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    let cl = null;
+    if (top(i, j)) {
+      const [lx, ly] = loc((i - c) * D, (j + E - c) * D);
+      const up = !top(i, j - 1), dn = !top(i, j + 1), lf = !top(i - 1, j), rt = !top(i + 1, j);
+      if (st.neon) cl = (up || dn || lf || rt) ? C.hi : (!top(i, j - 2) || !top(i, j + 2) || !top(i - 2, j) || !top(i + 2, j)) ? C.lo : null;
+      else cl = (up || lf) ? C.hi : (dn || rt) ? C.lo : null;
+      if (!cl) cl = st.top(lx, ly, kind, P, C) || C.top;
+    } else {
+      let s = -1; for (let k = 0; k < E; k++) if (b(i, j + k)) { s = k; break; }
+      if (s >= 0) cl = b(i, j) && !b(i, j + 1) ? C.sideLo : (st.neon && i % 6 === 0 ? '#123a48' : C.side); // 地面に着く所は暗く
+      else if (b(i - 2, j - 1) || b(i - 3, j - 2)) cl = C.shadow; // 右下に落ちる影
+      else if (obHash(i + x, j + y) < 0.07 && (b(i + 3, j) || b(i - 3, j) || b(i, j + 3) || b(i, j - 4))) cl = C.hi; // 足元のがれき
+    }
+    if (cl) { g.fillStyle = cl; g.fillRect(i, j, 1, 1); }
+  }
+  // 当たり判定: 形の中を丸で埋める（内側の点ほど大きい丸。大きい順に置く）
+  const pts = [], edge = [];
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) if (b(i, j)) { pts.push([i, j]); if (!b(i - 1, j) || !b(i + 1, j) || !b(i, j - 1) || !b(i, j + 1)) edge.push([i, j]); }
+  for (const p of pts) { let m = 1e9; for (const e of edge) { const d = (p[0] - e[0]) ** 2 + (p[1] - e[1]) ** 2; if (d < m) m = d; } p[2] = Math.sqrt(m) + 1; }
+  pts.sort((a, b2) => b2[2] - a[2]);
+  const circles = [], covered = new Uint8Array(pts.length);
+  for (let n = 0; n < pts.length && circles.length < 40; n++) {
+    if (covered[n]) continue;
+    const [pi, pj, pr] = pts[n]; if (pr * D < 9) break;
+    circles.push({ x: x + (pi - c) * D, y: y + (pj - c) * D - CONFIG.obstacle.elev / 2, r: pr * D }); // 見た目の上の面と足元の間に合わせる
+    for (let m = 0; m < pts.length; m++) if (!covered[m] && (pts[m][0] - pi) ** 2 + (pts[m][1] - pj) ** 2 <= (pr * 1.05) ** 2) covered[m] = 1;
+  }
+  return { x, y, R, kind, land, img: cv, c, circles };
+}
+function drawObstacle(o) {
+  const D = CONFIG.obstacle.dot;
+  ctx.save(); ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(o.img, o.x - (o.c + 0.5) * D, o.y - (o.c + 0.5) * D, o.img.width * D, o.img.height * D);
+  ctx.restore();
+}
 // ---------------- マップ ----------------
-function makePillars() {
-  S.pillars = [];
-  const [r0, r1] = CONFIG.pillarR, p = S.player;
-  for (let tries = 0; S.pillars.length < CONFIG.pillarCount && tries < 2000; tries++) {
-    const r = r0 + Math.random() * (r1 - r0);
-    const x = r + 40 + Math.random() * (CONFIG.mapW - 2 * r - 80), y = r + 40 + Math.random() * (CONFIG.mapH - 2 * r - 80);
-    if (Math.hypot(x - p.x, y - p.y) < CONFIG.pillarClear + r) continue;
-    if (S.pillars.some(q => Math.hypot(q.x - x, q.y - y) < q.r + r + 60)) continue; // 間を通れるようにあける
-    S.pillars.push({ x, y, r });
+function makePillars() { // 障害物は今いる国の形（2026-11-19）。当たり判定の丸を S.pillars に入れる
+  S.pillars = []; S.obstacles = [];
+  const p = S.player, land = (S.route && S.route[S.ci]) || 'calc';
+  for (let tries = 0; S.obstacles.length < CONFIG.pillarCount && tries < 400; tries++) {
+    const x = 200 + Math.random() * (CONFIG.mapW - 400), y = 200 + Math.random() * (CONFIG.mapH - 400);
+    if (Math.hypot(x - p.x, y - p.y) < CONFIG.pillarClear + 150) continue;
+    if (S.obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.R + 150 + 60)) continue; // 間を通れるようにあける（形の大きさが決まる前なので大きめに見る）
+    const o = makeObstacle(land, x, y);
+    if (Math.hypot(x - p.x, y - p.y) < CONFIG.pillarClear + o.R || S.obstacles.some(q => Math.hypot(q.x - x, q.y - y) < q.R + o.R + 60)) continue;
+    S.obstacles.push(o); for (const q of o.circles) S.pillars.push(q);
   }
 }
 function inMap(x, y, m) { return x >= m && y >= m && x <= CONFIG.mapW - m && y <= CONFIG.mapH - m; }
@@ -4162,15 +4331,13 @@ function draw() {
   }
   // マップの端
   ctx.strokeStyle = 'rgba(102,217,232,.45)'; ctx.lineWidth = 3; ctx.strokeRect(0, 0, CONFIG.mapW, CONFIG.mapH);
-  // 障害物（苔むした石柱に青白い光の線）
+  // 障害物（国ごとの形。衛星の残骸だけは丸のまま）
   for (const q of S.pillars) {
     if (Math.abs(q.x - p.x) > W / 2 + q.r || Math.abs(q.y - p.y) > H / 2 + q.r) continue;
-    if (q.debris) { drawDebris(q); continue; }
-    ctx.fillStyle = '#1e2a25'; ctx.beginPath(); ctx.arc(q.x, q.y, q.r, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#33473c'; ctx.lineWidth = 3; ctx.stroke();
-    ctx.strokeStyle = 'rgba(153,233,242,.55)'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(q.x, q.y, q.r * 0.6, 0.3, 2.2); ctx.moveTo(q.x - q.r * 0.3, q.y + q.r * 0.25); ctx.lineTo(q.x + q.r * 0.35, q.y - q.r * 0.3); ctx.stroke();
+    if (q.debris) drawDebris(q);
   }
+  for (const o of S.obstacles || []) if (Math.abs(o.x - p.x) < W / 2 + o.R + 40 && Math.abs(o.y - p.y) < H / 2 + o.R + 40) drawObstacle(o);
+  if (window.__obHit) { ctx.strokeStyle = 'rgba(255,80,80,.8)'; ctx.lineWidth = 1; for (const q of S.pillars) { ctx.beginPath(); ctx.arc(q.x, q.y, q.r, 0, Math.PI * 2); ctx.stroke(); } } // [TEST] 当たり判定の丸
 
   // 国別ブロック案の場: 胞子雲・引力・落雷の予告・網の糸
   for (const cl of S.clouds) {
