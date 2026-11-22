@@ -141,13 +141,16 @@
     background: #10233a; color: #c5f6fa; border: 1px solid #66d9e8; cursor: move; white-space: nowrap; user-select: none; }
   .cgrip:hover { background: #33606d; }
 
-  /* ---- スマホ操作（UC依頼 2026-11-13。狙い方はdailiesでA=右パッドで狙う＋魔法ボタンを選択） ---- */
+  /* ---- スマホ操作（UC依頼 2026-11-13。2026-11-22 狙い方を変更: 魔法ボタンを引っぱって狙う（dailiesでB）） ---- */
   #tc { display: none; }
   body.touch { touch-action: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
   body.touch #tc { display: block; position: fixed; inset: 0; z-index: 5; }
+  body.touch #tc.off { display: none; } /* タイトル・選択画面・編集画面・ゲームオーバーでは操作ボタンを隠す */
+  body.touch .ky, body.touch .pconly { display: none; } /* キーボードの案内はスマホでは出さない */
+  .tonly { display: none; } body.touch .tonly { display: inline-block; }
   body.touch #hint { display: none; }
   body.touch .overlay, body.touch #over, body.touch #editor { z-index: 20; } /* 操作ボタンより上に出す */
-  body.touch #slots { top: 6px; bottom: auto; transform: translateX(-50%) scale(.62); transform-origin: top center; pointer-events: none; z-index: 6; }
+  body.touch #slots { display: none; } /* スマホは魔法ボタンの周りにリキャストが出るので、上の魔法の枠は出さない（狭い画面でHPバーと重なるため。2026-11-22） */
   body.touch #bossbar { top: 48px; max-width: 46vw; }
   body.touch #hud { transform: scale(.8); transform-origin: top left; top: 8px; left: 10px; z-index: 6; }
   body.touch #heroBar { bottom: auto; top: 92px; flex-wrap: wrap; max-width: 60vw; }
@@ -159,10 +162,12 @@
     background: rgba(102,217,232,.35); border: 2px solid rgba(197,246,250,.7); }
   .pad.on { border-color: rgba(197,246,250,.7); }
   #tc .lb { position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; text-align: center; font-size: 11px; color: rgba(197,246,250,.6); }
-  #padR { pointer-events: auto; touch-action: none; }
+  #aimRing { display: none; } #aimRing.on { display: block; }
   .tbtn { position: absolute; border-radius: 50%; border: 2px solid rgba(197,246,250,.6); background: rgba(27,30,42,.7); color: #e3fafc;
     font: bold 13px "Segoe UI", "Hiragino Sans", sans-serif; touch-action: none; padding: 0; }
   .tbtn.big { width: 68px; height: 68px; }
+  .tbtn.big.main { width: 80px; height: 80px; font-size: 14px; }
+  .tbtn .bl { position: absolute; left: -20px; right: -20px; top: 100%; margin-top: 3px; font-size: 10px; font-weight: normal; color: rgba(197,246,250,.6); }
   .tbtn.sm { width: 46px; height: 46px; font-size: 11px; border-radius: 12px; }
   .tbtn.on { background: rgba(59,91,219,.75); }
   .tbtn.wait { color: #8a90a6; }
@@ -174,7 +179,7 @@
   body.touch #overBtns { display: flex; }
   #overBtns .btn { font-size: 16px; padding: 10px 18px; }
   .portraitTip { display: none; color: #ffd43b; font-size: 13px; margin: -12px 0 14px; }
-  @media (orientation: portrait) { body.touch .portraitTip { display: block; } body.touch #slots { top: 92px; } body.touch #bossbar { top: 128px; max-width: 80vw; } }
+  @media (orientation: portrait) { body.touch .portraitTip { display: block; } body.touch #bossbar { top: 128px; max-width: 80vw; } }
   body.touch .cards { flex-wrap: wrap; }
   body.touch .overlay { overflow-y: auto; align-items: flex-start; padding: 12px 8px; touch-action: pan-y; }
   body.touch .overlay > div { margin: auto; }
@@ -204,8 +209,8 @@
 <div id="tc"><!-- スマホ操作 -->
   <div class="zone" id="zoneL"></div>
   <div class="pad" id="padL"><div class="knob"></div><div class="lb">移動</div></div>
-  <div class="pad" id="padR"><div class="knob"></div><div class="lb">別の向きを狙う</div></div>
-  <button class="tbtn big" id="tb1"><span class="cdr"></span>魔法1</button>
+  <div class="pad" id="aimRing"><div class="knob"></div></div>
+  <button class="tbtn big main" id="tb1"><span class="cdr"></span>魔法1<span class="bl">引っぱって狙う</span></button>
   <button class="tbtn big" id="tb2"><span class="cdr"></span>魔法2</button>
   <button class="tbtn sm" id="tbEd">組む</button>
   <button class="tbtn sm" id="tbMute">音</button>
@@ -231,7 +236,8 @@
 <div id="heroSel" class="overlay">
   <div>
     <h1>主人公を選ぶ</h1>
-    <div class="sub">選んだ主人公の国から旅が始まります。主人公ごとにスキルがちがいます（数値は仮）。Esc で戻る</div>
+    <div class="sub">選んだ主人公の国から旅が始まります。主人公ごとにスキルがちがいます（数値は仮）。<span class="pconly">Esc で戻る</span></div>
+    <button class="btn tonly" id="heroBack" style="margin-bottom:10px">← モード選択へ戻る</button>
     <div class="cards" id="herocards"></div>
   </div>
 </div>
@@ -1258,6 +1264,7 @@ function renderHeroBar() {
     bar.appendChild(b);
   }
 }
+const isTouchUI = () => document.body.classList.contains('touch'); // スマホの表示（キーの案内を出さない）
 function showTitle() {
   mode = null;
   document.getElementById('heroSel').classList.remove('open');
@@ -1316,7 +1323,7 @@ function choosePickup(i) {
   S.unlocked.add(t);
   S.choosing = false;
   document.getElementById('pickup').classList.remove('open');
-  S.fx.push({ kind: 'text', x: p.x, y: p.y - 30, t: 0, life: 1.2, text: BLOCK_DEF[t].name + ' を覚えた（Spaceで組む）', color: '#f5c542' });
+  S.fx.push({ kind: 'text', x: p.x, y: p.y - 30, t: 0, life: 1.2, text: BLOCK_DEF[t].name + (isTouchUI() ? ' を覚えた（「組む」で組む）' : ' を覚えた（Spaceで組む）'), color: '#f5c542' });
   if (levelUp()) return; // 一度に何レベルも上がったとき
   if (S.phase !== 'clear') return;
   if (pickBonus || !(mode === 'normal' && openPickup(true))) beginBreak(); // 階クリア: レベルアップの後に階クリアの3択
@@ -3689,7 +3696,7 @@ function gameEnd(win) {
   else if (f) document.getElementById('overtext').textContent =
     `${S.ci + 1}か国目 ${nm} に ${mmss(f.t)} 耐えた… クリアライン ${mmss(CONFIG.fb.clearLine)} まであと ${mmss(CONFIG.fb.clearLine - f.t)}`;
   else document.getElementById('overtext').textContent = `${whereText()} で倒れた… 撃破 ${S.kills}`;
-  document.getElementById('overhint').textContent = mode === 'debug'
+  document.getElementById('overhint').textContent = isTouchUI() ? '' : mode === 'debug'
     ? 'R で1か国目の1階から（組んだ魔法はそのまま） / T でモード選択へ'
     : 'R で1か国目の1階からやり直し（同じ主人公。ブロックと魔法は最初から） / T でモード選択へ';
   document.getElementById('over').style.display = 'flex';
@@ -4593,8 +4600,8 @@ function draw() {
     `<span class="atk">攻撃力 ${p.atk}${atkMul() > 1 ? `（静止 +${Math.round((atkMul() - 1) * 100)}%）` : ''}</span><span class="hp">HP ${Math.ceil(p.hp)} / ${p.maxHp}</span><span class="lv">Lv ${S.level}（${S.exp} / ${S.expNeed}）</span>`;
   document.getElementById('expfill').style.width = Math.min(100, S.exp / S.expNeed * 100) + '%';
   let info = S.final
-    ? `${S.ci + 1}か国目 ラスボス ${finalDef().name}　耐えた時間 ${mmss(S.final.t)} / クリアライン ${mmss(CONFIG.fb.clearLine)}　撃破 ${S.kills}　弾 ${S.bullets.length}`
-    : `${whereText()}（${S.ci + 1} / ${CONFIG.landsPerRun}か国）　残り ${remaining()}体　撃破 ${S.kills}　弾 ${S.bullets.length}`;
+    ? `${S.ci + 1}か国目 ラスボス ${finalDef().name}　耐えた時間 ${mmss(S.final.t)} / クリアライン ${mmss(CONFIG.fb.clearLine)}　撃破 ${S.kills}${isTouchUI() ? '' : `　弾 ${S.bullets.length}`}`
+    : `${whereText()}（${S.ci + 1} / ${CONFIG.landsPerRun}か国）　残り ${remaining()}体　撃破 ${S.kills}${isTouchUI() ? '' : `　弾 ${S.bullets.length}`}`;
   if (mode === 'debug') info += '　【デバッグモード】H 主人公の切り替え / B ボスへ / N この階（ラスボス戦ならこの国）をクリア / L 今の国のラスボスへ（押すたびに次の国）/ U・J 攻撃力± / I・K 最大HP± / O 経験値を出す / P すぐレベルアップ'; // [TEST]
   document.getElementById('stats').textContent = info;
   document.getElementById('bossbar').style.display = S.boss ? 'block' : 'none';
@@ -4626,7 +4633,7 @@ function draw() {
 // スロット表示
 const slotEls = Array.from({ length: SLOTS }, (_, i) => {
   const el = document.createElement('div'); el.className = 'slot';
-  el.innerHTML = `<span class="k">${['左', '右', '自動'][i]}</span><span class="n"></span><div class="cd"><div></div></div>`;
+  el.innerHTML = `<span class="k${i < 2 ? ' pconly' : ''}">${['左', '右', '自動'][i]}</span><span class="n"></span><div class="cd"><div></div></div>`;
   document.getElementById('slots').appendChild(el);
   return { el, name: el.querySelector('.n'), bar: el.querySelector('.cd div') };
 });
@@ -4716,9 +4723,10 @@ function setEditor(open) {
     : fl < 0 ? `${landName(S.route[S.ci - 1])}クリア！ 次の国（${ln}）の前に魔法を練り直す`
     : S.next === 'final' ? `${ln} ${fl + 1}階クリア！ ラスボスの前に魔法を練り直す`
     : `${ln} ${fl + 1}階クリア！ 次の階の前に魔法を練り直す`;
-  document.getElementById('closeEditor').textContent = !between ? '戦闘に戻る（Space）'
-    : S.next === 'final' ? `ラスボス ${FINAL_BOSSES[curLand()].name} へ進む（Space）`
-    : `${ln} ${fl + 2}階へ進む（Space）`;
+  const sp = isTouchUI() ? '' : '（Space）';
+  document.getElementById('closeEditor').textContent = !between ? '戦闘に戻る' + sp
+    : S.next === 'final' ? `ラスボス ${FINAL_BOSSES[curLand()].name} へ進む${sp}`
+    : `${ln} ${fl + 2}階へ進む${sp}`;
   if (open) renderEditor(); else { saveMagics(); refreshSlots(); if (between) { if (S.next === 'final') startFinal(); else startStage(S.stage + 1); } }
 }
 function msg(t) {
@@ -5242,23 +5250,27 @@ new MutationObserver(() => requestAnimationFrame(fitEditor)).observe(edEl, { att
 
 const TC = (() => {
   const $ = id => document.getElementById(id);
-  const padL = $('padL'), padR = $('padR'), zoneL = $('zoneL'), aimDot = $('aimDot');
+  const tc = $('tc'), padL = $('padL'), ring = $('aimRing'), zoneL = $('zoneL'), aimDot = $('aimDot');
   const b1 = $('tb1'), b2 = $('tb2'), bEd = $('tbEd'), bMute = $('tbMute'), bFs = $('tbFs');
-  const R = 64, held = [false, false];
-  let lId = null, rId = null, aimA = -Math.PI / 2, homeL = [0, 0];
+  const R = 64, held = [false, false], drag = [null, null]; // drag[i] = 魔法ボタンを押している指 { id, t }
+  let lId = null, aimA = -Math.PI / 2, homeL = [0, 0];
   const isTouch = () => document.body.classList.contains('touch');
-  const enable = () => { if (!isTouch()) { document.body.classList.add('touch'); layout(); } };
+  const enable = () => {
+    if (isTouch()) return;
+    document.body.classList.add('touch'); layout();
+    for (const d of Object.values(BLOCK_DEF)) if (d.desc) d.desc = d.desc.replace(/マウスの方向/g, '狙う方向').replace(/マウスの位置/g, '狙った先'); // 説明文もスマホ向けに
+  };
 
   function layout() {
     const w = innerWidth, h = innerHeight, m = Math.min(w, h);
     const r = m < 420 ? 54 : 64, sc = r / 64;
-    for (const p of [padL, padR]) p.style.transform = `scale(${sc})`;
+    for (const p of [padL, ring]) p.style.transform = `scale(${sc})`;
     homeL = [24 + r, h - 24 - r];
     if (lId === null) place(padL, homeL[0], homeL[1]);
-    const rx = w - 24 - r, ry = h - 24 - r; place(padR, rx, ry);
-    const bs = 68, g = 12;
-    b1.style.left = (rx - r - g - bs - 6) + 'px'; b1.style.top = (ry - bs / 2 + 10) + 'px';
-    b2.style.left = (rx - r - bs / 2 + 4) + 'px'; b2.style.top = (ry - r - g - bs - 6) + 'px';
+    // 魔法ボタン: 右下。引っぱる余白をとって、端から少し離す。魔法2は魔法1の左上
+    const c1 = [w - 64 - 40, h - 34 - 40], c2 = [c1[0] - 110, c1[1] - 40];
+    b1.style.left = (c1[0] - 40) + 'px'; b1.style.top = (c1[1] - 40) + 'px'; b1._c = c1;
+    b2.style.left = (c2[0] - 34) + 'px'; b2.style.top = (c2[1] - 34) + 'px'; b2._c = c2;
     bEd.style.right = '10px'; bEd.style.top = '10px';
     bMute.style.right = '62px'; bMute.style.top = '10px';
     bFs.style.right = '114px'; bFs.style.top = '10px';
@@ -5284,21 +5296,33 @@ const TC = (() => {
   });
   const endL = e => { if (e.pointerId !== lId) return; lId = null; touchMv.on = false; touchMv.x = touchMv.y = 0; knob(padL, 0, 0); padL.classList.remove('on'); place(padL, homeL[0], homeL[1]); };
   zoneL.addEventListener('pointerup', endL); zoneL.addEventListener('pointercancel', endL);
-  // 狙うパッド
-  padR.addEventListener('pointerdown', e => { rId = e.pointerId; padR.setPointerCapture(e.pointerId); padR.classList.add('on'); aimMove(e); e.preventDefault(); });
-  padR.addEventListener('pointermove', e => { if (e.pointerId === rId) aimMove(e); });
-  function aimMove(e) { const [x, y] = stick(padR, e); if (Math.hypot(x, y) > 0.2) aimA = Math.atan2(y, x); }
-  const endR = e => { if (e.pointerId !== rId) return; rId = null; knob(padR, 0, 0); padR.classList.remove('on'); };
-  padR.addEventListener('pointerup', endR); padR.addEventListener('pointercancel', endR);
-  // ボタン
+  // 魔法ボタン（UC選択 2026-11-22 B）: 押したまま指をずらすとその向きを狙い、押している間は撃てるたびに撃つ。
+  // ちょんと押すだけなら前に狙った向きへ1回撃つ。最後に狙った向きは覚えておく（歩く向きには変わらない）
+  const DEAD = 0.3, TAP = 0.15; // 狙いになるまでのずらす量（輪の半径に対する割合） / 動かさずに押し続けたら前の向きで撃ち始めるまで(秒)
   [b1, b2].forEach((b, i) => {
-    b.addEventListener('pointerdown', e => { held[i] = true; b.setPointerCapture(e.pointerId); b.classList.add('on'); setAim(); cast(i); e.preventDefault(); });
-    const up = () => { held[i] = false; b.classList.remove('on'); };
+    b.addEventListener('pointerdown', e => {
+      if (drag[i]) return;
+      drag[i] = { id: e.pointerId, t: performance.now() }; b.setPointerCapture(e.pointerId); b.classList.add('on'); e.preventDefault();
+      place(ring, b._c[0], b._c[1]); knob(ring, 0, 0); ring.classList.add('on');
+    });
+    b.addEventListener('pointermove', e => {
+      const d = drag[i]; if (!d || e.pointerId !== d.id) return;
+      const [x, y] = stick(ring, e);
+      if (Math.hypot(x, y) > DEAD) { aimA = Math.atan2(y, x); held[i] = true; }
+    });
+    const up = e => {
+      const d = drag[i]; if (!d || e.pointerId !== d.id) return;
+      if (!held[i]) { setAim(); cast(i); } // ちょんと押しただけ: 前の向きへ1回
+      drag[i] = null; held[i] = false; b.classList.remove('on');
+      if (!drag[0] && !drag[1]) ring.classList.remove('on');
+    };
     b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
   });
+  let ghostUntil = 0;
+  document.addEventListener('click', e => { if (performance.now() < ghostUntil) { e.stopPropagation(); e.preventDefault(); } }, true);
   const onTap = (el, f) => { // click より確実に: 同じボタンの上で押して離したら
     el.addEventListener('pointerdown', e => { el._tp = e.pointerId; });
-    el.addEventListener('pointerup', e => { if (el._tp === e.pointerId) { el._tp = null; f(); } });
+    el.addEventListener('pointerup', e => { if (el._tp === e.pointerId) { el._tp = null; ghostUntil = performance.now() + 450; f(); } }); // 直後のクリックが、下に出てきた画面のボタンを押さないように
     el.addEventListener('click', e => { if (e.pointerType !== 'touch' && e.detail === 0) f(); }); // キーボード操作など
   };
   onTap(bEd, () => { if (mode && S && !S.over && !S.choosing && !S.landSel) setEditor(!editorOpen); });
@@ -5311,8 +5335,9 @@ const TC = (() => {
     else document.documentElement.requestFullscreen().then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {})).catch(() => {});
   });
   onTap(document.getElementById('obRetry'), () => { if (S && S.over) newGame(); });
+  onTap(document.getElementById('heroBack'), () => showTitle());
   onTap(document.getElementById('obTitle'), () => { if (S && S.over) showTitle(); });
-  addEventListener('blur', () => { held[0] = held[1] = false; touchMv.on = false; });
+  addEventListener('blur', () => { held[0] = held[1] = false; drag[0] = drag[1] = null; ring.classList.remove('on'); touchMv.on = false; });
   addEventListener('resize', () => { if (isTouch()) layout(); });
 
   function setAim() { // ゲームはマウスの位置で狙うので、狙う向きの先にマウスを置く
@@ -5321,7 +5346,10 @@ const TC = (() => {
   }
   function tick() {
     if (isTouch()) {
-      if (rId === null && touchMv.on) aimA = Math.atan2(touchMv.y, touchMv.x); // 右のパッドを触っていなければ歩く向きを狙う
+      const hide = !mode || editorOpen || !!document.querySelector('.overlay.open') || !!(S && S.over);
+      tc.classList.toggle('off', hide);
+      if (hide) { held[0] = held[1] = false; drag[0] = drag[1] = null; ring.classList.remove('on'); }
+      for (let i = 0; i < 2; i++) if (drag[i] && !held[i] && performance.now() - drag[i].t > TAP * 1000) held[i] = true; // 動かさずに押し続けた: 前の向きで撃ち続ける
       setAim();
       const r = Math.min(110, Math.min(W, H) * 0.3);
       aimDot.style.left = (W / 2 + Math.cos(aimA) * r) + 'px'; aimDot.style.top = (H / 2 + Math.sin(aimA) * r) + 'px';
